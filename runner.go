@@ -384,14 +384,7 @@ func (r *Runner) registerMetric(name string, metric interface{}) {
 	}
 }
 
-func (r *Runner) fullAttack() {
-	r.TestStage = constantLoad
-	if r.Config.Verbose {
-		r.L.Infof("begin full attack of [%d] remaining seconds", r.Config.AttackTimeSec-r.Config.RampUpTimeSec)
-	}
-	fullAttackStartedAt = time.Now()
-	limiter := ratelimit.New(r.Config.RPS)
-	doneDeadline := time.Now().Add(time.Duration(r.Config.AttackTimeSec-r.Config.RampUpTimeSec) * time.Second)
+func (r *Runner) updateMetrics() {
 	go func() {
 		interval := 1 * time.Second
 		for {
@@ -399,12 +392,27 @@ func (r *Runner) fullAttack() {
 			if r.stopped {
 				return
 			}
-			if r.Metrics != nil {
-				r.Metrics[r.name].updateLatencies()
-				r.Metrics[r.name].updateSuccessRatio()
+			if r.Metrics == nil {
+				continue
 			}
+			if _, ok := r.Metrics[r.name]; !ok {
+				continue
+			}
+			r.Metrics[r.name].updateLatencies()
+			r.Metrics[r.name].updateSuccessRatio()
+			r.L.Infof("rate [%4f], mean response [%v], # requests [%d], # attackers [%d], %% success [%d]",
+				r.Metrics[r.name].Rate, r.Metrics[r.name].meanLogEntry(), r.Metrics[r.name].Requests, len(r.attackers), r.Metrics[r.name].successLogEntry())
 		}
 	}()
+}
+
+func (r *Runner) fullAttack() {
+	r.TestStage = constantLoad
+	r.L.Infof("begin full attack of [%d] remaining seconds", r.Config.AttackTimeSec-r.Config.RampUpTimeSec)
+	fullAttackStartedAt = time.Now()
+	limiter := ratelimit.New(r.Config.RPS)
+	doneDeadline := time.Now().Add(time.Duration(r.Config.AttackTimeSec-r.Config.RampUpTimeSec) * time.Second)
+	r.updateMetrics()
 	for time.Now().Before(doneDeadline) {
 		select {
 		case <-r.stop:
@@ -417,9 +425,7 @@ func (r *Runner) fullAttack() {
 			}
 		}
 	}
-	if r.Config.Verbose {
-		r.L.Info("end full attack")
-	}
+	r.L.Info("end full attack")
 }
 
 func (r *Runner) rampUp() bool {
